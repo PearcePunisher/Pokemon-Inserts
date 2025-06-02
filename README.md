@@ -60,7 +60,7 @@ pip install pillow pandas requests beautifulsoup4 reportlab
 ## Notes
 
 - The `inserts/` folder will need to be created within your environment for this to work properly.
-- Tge `xxxxxxxxxxx.csv` is auto-generated and ignored by git.
+- The `xxxxxxxxxxx.csv` is auto-generated and ignored by git.
 - The PDF is formatted for US Letter paper with 9 cards per page and small gaps for cutting.
 
 ## License
