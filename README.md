@@ -1,68 +1,109 @@
-# Pokemon Card Inserts Generator
+# Pokemon Inserts Generator
 
-This project automates the process of scraping Pokémon TCG card images, generating custom insert images, and laying them out for print as a PDF. It's CURRENTLY designed for the "Destined Rivals" set.
+A simple cross-platform desktop app to:
+- Scrape card images from a Limitless TCG set URL
+- Generate numbered insert images
+- Layout inserts into a printable PDF (3x3 per page, US Letter)
 
-## Features
+## Quick start for non‑technical users (macOS & Windows)
 
-- **Scrape Card Data:** Downloads card numbers and image URLs from LimitlessTCG.
-- **Generate Inserts:** Creates stylized insert images with blurred backgrounds and large numbers.
-- **PDF Layout:** Arranges inserts in a print-ready PDF with minimal gaps for easy cutting.
+Assumption: You already have Python installed.
 
-## Project Structure
+1) Get the project folder
+- Download this project as a ZIP and unzip it, or copy the whole folder to your computer.
 
-- [`scrape_cards.py`](scrape_cards.py): Scrapes card data and saves it to `destined_rivals_cards.csv`.
-- [`create_inserts.py`](create_inserts.py): Generates insert images in the `inserts/` folder.
-- [`create_pdf.py`](create_pdf.py): Lays out inserts into `destined_rivals_inserts.pdf`.
-- [`destined_rivals_cards.csv`](destined_rivals_cards.csv): Card numbers and image URLs (auto-generated).
-- [`pokemon_solid.ttf`](pokemon_solid.ttf): Font for insert numbers (add this file yourself).
-- [`inserts/`](inserts/): Folder for generated insert images.
-- `.gitignore`: Prevents large/generated files from being committed.
+2) Open a terminal
+- macOS: Applications > Utilities > Terminal
+- Windows: Open Command Prompt (or PowerShell)
 
-## Requirements
+3) Go to the project folder
+- Tip: You can drag the folder into the terminal window after typing `cd `
 
-- Python 3.x
-- [Pillow](https://python-pillow.org/)
-- [pandas](https://pandas.pydata.org/)
-- [requests](https://docs.python-requests.org/)
-- [beautifulsoup4](https://www.crummy.com/software/BeautifulSoup/)
-- [reportlab](https://www.reportlab.com/)
-
-Install dependencies with:
-
-```sh
-pip install pillow pandas requests beautifulsoup4 reportlab
+```bash
+cd path/to/Pokemon-Inserts
 ```
 
-## Usage
+4) Create a private Python environment (recommended)
+- This keeps the app’s dependencies separate from your system
 
-1. **Scrape Card Data**
+macOS/Linux:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
 
-   ```sh
-   python scrape_cards.py
-   ```
+Windows (Command Prompt):
+```cmd
+python -m venv .venv
+.venv\Scripts\activate
+```
 
-2. **Generate Insert Images**
+Windows (PowerShell):
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
 
-   ```sh
-   python create_inserts.py
-   ```
+5) Install the app’s requirements
+```bash
+pip install -r requirements.txt
+```
+- If `pip` isn’t found, try: `python -m pip install -r requirements.txt`
 
-   > Make sure `pokemon_solid.ttf` is present in the project directory for best results.
+6) Run the app
+```bash
+python app.py
+```
+- A small window will open. Paste a Limitless TCG cards URL (for example: https://limitlesstcg.com/cards/WHT), then click Generate.
+- When it finishes, click “Open Output Folder” to see your files.
 
-3. **Create PDF Layout**
+Where are the outputs?
+- The app saves everything under `output/<set>/` inside this folder.
+- You’ll find all generated PNG inserts in `output/<set>/inserts/` and the final PDF named `<set>_inserts.pdf`.
 
-   ```sh
-   python create_pdf.py
-   ```
+Troubleshooting
+- If the window does not appear, your Python install may not include Tkinter. Install a standard Python from python.org (macOS/Windows) and try again.
+- If activation fails on Windows PowerShell due to policy, either use Command Prompt or run PowerShell as Administrator and temporarily enable script execution.
 
-   The final PDF will be saved as `destined_rivals_inserts.pdf`.
+---
+
+## How to run (developer)
+
+1) Create/activate a virtual environment and install deps:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+2) Start the app:
+
+```bash
+python app.py
+```
+
+Paste the Limitless TCG set URL (e.g., https://limitlesstcg.com/cards/WHT), click Generate, and wait. When done, use the "Open Output Folder" button.
+
+Outputs will be under `output/<set>/`, including `inserts/` PNGs and `<set>_inserts.pdf`.
+
+## Packaging into a standalone app (optional)
+
+You can create a single-file executable using PyInstaller.
+
+```bash
+pip install pyinstaller
+pyinstaller --onefile --windowed \
+  --add-data "pokemon_solid.ttf:pokemon_solid.ttf" \
+  app.py
+```
+
+- macOS binary will be at `dist/app`
+- Windows binary will be at `dist\app.exe`
+
+Note: If fonts or images are missing in the bundled app, ensure `--add-data` paths are correct. On Windows, use `;` as the data path separator instead of `:`.
 
 ## Notes
-
-- The `inserts/` folder will need to be created within your environment for this to work properly.
-- The `xxxxxxxxxxx.csv` is auto-generated and ignored by git.
-- The PDF is formatted for US Letter paper with 9 cards per page and small gaps for cutting.
-
-## License
-
-This project is for personal use and not affiliated with or endorsed by Pokémon or LimitlessTCG.
+- The scraper relies on the current Structure of Limitless TCG. If it changes, selectors may need adjustment.
+- The app sets a desktop-like User-Agent and uses timeouts.
+- PDF layout targets US Letter. For A4, adjust page size.

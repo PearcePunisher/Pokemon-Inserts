@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 
 # URL of the set
-url = "https://limitlesstcg.com/cards/DRI"
+url = "https://limitlesstcg.com/cards/WHT"
 
 # Fetch the page
 response = requests.get(url)
