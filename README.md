@@ -57,13 +57,22 @@ python app.py
 - A small window will open. Paste a Limitless TCG cards URL (for example: https://limitlesstcg.com/cards/WHT), then click Generate.
 - When it finishes, click “Open Output Folder” to see your files.
 
+If the window does not open (Tkinter error), see Troubleshooting below or use CLI mode:
+```bash
+python app.py
+# When prompted in the terminal, paste the URL and press Enter
+```
+
 Where are the outputs?
 - The app saves everything under `output/<set>/` inside this folder.
 - You’ll find all generated PNG inserts in `output/<set>/inserts/` and the final PDF named `<set>_inserts.pdf`.
 
 Troubleshooting
+- Tkinter missing on macOS (ModuleNotFoundError: _tkinter):
+  - Install the official Python from https://www.python.org/downloads/ (it includes Tk/Tkinter) and make sure the terminal is using that Python (you may need to restart Terminal). Then re‑create/activate the `.venv` and reinstall requirements.
+  - Homebrew Python sometimes lacks a Tk GUI by default. The python.org installer typically resolves this.
 - If the window does not appear, your Python install may not include Tkinter. Install a standard Python from python.org (macOS/Windows) and try again.
-- If activation fails on Windows PowerShell due to policy, either use Command Prompt or run PowerShell as Administrator and temporarily enable script execution.
+- Windows PowerShell activation policy: if activation fails, either use Command Prompt or run PowerShell as Administrator and temporarily enable script execution.
 
 ---
 

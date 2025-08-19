@@ -13,9 +13,15 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
+from typing import Optional
 
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+# Try to import Tkinter; fall back to CLI mode if unavailable
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, filedialog
+    HAS_TK = True
+except Exception:
+    HAS_TK = False
 
 
 # ---------- Utility helpers ----------
@@ -45,10 +51,15 @@ USER_AGENT = (
 )
 
 
-def log_safe(q: queue.Queue, msg: str):
+def log_safe(q: Optional[queue.Queue], msg: str):
+    if q is None:
+        # CLI mode: print to stdout
+        print(msg)
+        return
     try:
         q.put_nowait(msg)
     except Exception:
+        # If queue is full or closed, ignore
         pass
 
 
@@ -217,124 +228,154 @@ def create_pdf_from_inserts(inserts_dir: str, output_pdf: str, q: queue.Queue):
 
 # ---------- Tkinter UI ----------
 
-class App(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("Pokemon Inserts Generator")
-        self.geometry("720x480")
-        self.minsize(680, 420)
+if HAS_TK:
+    class App(tk.Tk):
+        def __init__(self):
+            super().__init__()
+            self.title("Pokemon Inserts Generator")
+            self.geometry("720x480")
+            self.minsize(680, 420)
 
-        self.queue: queue.Queue[str] = queue.Queue()
-        self.worker: threading.Thread | None = None
-        self.result_pdf: str | None = None
-        self.output_dir: str | None = None
+            self.queue: queue.Queue[str] = queue.Queue()
+            self.worker: threading.Thread | None = None
+            self.result_pdf: str | None = None
+            self.output_dir: str | None = None
 
-        self.create_widgets()
-        self.after(100, self.process_queue)
+            self.create_widgets()
+            self.after(100, self.process_queue)
 
-    def create_widgets(self):
-        frm = ttk.Frame(self, padding=16)
-        frm.pack(fill=tk.BOTH, expand=True)
+        def create_widgets(self):
+            frm = ttk.Frame(self, padding=16)
+            frm.pack(fill=tk.BOTH, expand=True)
 
-        url_label = ttk.Label(frm, text="Limitless TCG cards URL:")
-        url_label.grid(row=0, column=0, sticky='w')
+            url_label = ttk.Label(frm, text="Limitless TCG cards URL:")
+            url_label.grid(row=0, column=0, sticky='w')
 
-        self.url_var = tk.StringVar()
-        self.url_entry = ttk.Entry(frm, textvariable=self.url_var)
-        self.url_entry.grid(row=1, column=0, columnspan=3, sticky='ew', pady=(4, 12))
-        self.url_entry.focus_set()
+            self.url_var = tk.StringVar()
+            self.url_entry = ttk.Entry(frm, textvariable=self.url_var)
+            self.url_entry.grid(row=1, column=0, columnspan=3, sticky='ew', pady=(4, 12))
+            self.url_entry.focus_set()
 
-        self.start_btn = ttk.Button(frm, text="Generate", command=self.on_start)
-        self.start_btn.grid(row=2, column=0, sticky='w')
+            self.start_btn = ttk.Button(frm, text="Generate", command=self.on_start)
+            self.start_btn.grid(row=2, column=0, sticky='w')
 
-        self.open_btn = ttk.Button(frm, text="Open Output Folder", command=self.on_open_folder, state=tk.DISABLED)
-        self.open_btn.grid(row=2, column=1, sticky='w', padx=(8, 0))
+            self.open_btn = ttk.Button(frm, text="Open Output Folder", command=self.on_open_folder, state=tk.DISABLED)
+            self.open_btn.grid(row=2, column=1, sticky='w', padx=(8, 0))
 
-        self.progress = ttk.Progressbar(frm, mode='indeterminate')
-        self.progress.grid(row=2, column=2, sticky='e')
+            self.progress = ttk.Progressbar(frm, mode='indeterminate')
+            self.progress.grid(row=2, column=2, sticky='e')
 
-        self.log = tk.Text(frm, height=18, wrap='word')
-        self.log.grid(row=3, column=0, columnspan=3, sticky='nsew', pady=(12, 0))
+            self.log = tk.Text(frm, height=18, wrap='word')
+            self.log.grid(row=3, column=0, columnspan=3, sticky='nsew', pady=(12, 0))
 
-        frm.columnconfigure(0, weight=1)
-        frm.columnconfigure(1, weight=0)
-        frm.columnconfigure(2, weight=0)
-        frm.rowconfigure(3, weight=1)
+            frm.columnconfigure(0, weight=1)
+            frm.columnconfigure(1, weight=0)
+            frm.columnconfigure(2, weight=0)
+            frm.rowconfigure(3, weight=1)
 
-        self.bind('<Return>', lambda e: self.on_start())
+            self.bind('<Return>', lambda e: self.on_start())
 
-    def append_log(self, text: str):
-        self.log.insert(tk.END, text + "\n")
-        self.log.see(tk.END)
+        def append_log(self, text: str):
+            self.log.insert(tk.END, text + "\n")
+            self.log.see(tk.END)
 
-    def process_queue(self):
-        try:
-            while True:
-                msg = self.queue.get_nowait()
-                self.append_log(msg)
-        except queue.Empty:
-            pass
-        self.after(100, self.process_queue)
+        def process_queue(self):
+            try:
+                while True:
+                    msg = self.queue.get_nowait()
+                    self.append_log(msg)
+            except queue.Empty:
+                pass
+            self.after(100, self.process_queue)
 
-    def on_start(self):
-        if self.worker and self.worker.is_alive():
-            return
-        url = self.url_var.get().strip()
-        if not url:
-            messagebox.showerror("Missing URL", "Please paste a Limitless TCG cards URL.")
-            return
-        if not url.lower().startswith("http"):
-            messagebox.showerror("Invalid URL", "Please enter a valid http(s) URL.")
-            return
+        def on_start(self):
+            if self.worker and self.worker.is_alive():
+                return
+            url = self.url_var.get().strip()
+            if not url:
+                messagebox.showerror("Missing URL", "Please paste a Limitless TCG cards URL.")
+                return
+            if not url.lower().startswith("http"):
+                messagebox.showerror("Invalid URL", "Please enter a valid http(s) URL.")
+                return
 
-        self.result_pdf = None
-        self.output_dir = None
-        self.open_btn.config(state=tk.DISABLED)
-        self.start_btn.config(state=tk.DISABLED)
-        self.progress.start(10)
-        self.log.delete('1.0', tk.END)
-
-        self.worker = threading.Thread(target=self.run_pipeline, args=(url,), daemon=True)
-        self.worker.start()
-
-    def run_pipeline(self, url: str):
-        try:
-            cards = scrape_cards(url, self.queue)
-
-            set_name = derive_set_name_from_url(url)
-            base_output = os.path.join(os.path.abspath(os.getcwd()), 'output', set_name)
-            inserts_dir = os.path.join(base_output, 'inserts')
-            os.makedirs(inserts_dir, exist_ok=True)
-
-            create_inserts(cards, inserts_dir, self.queue)
-
-            output_pdf = os.path.join(base_output, f"{set_name}_inserts.pdf")
-            create_pdf_from_inserts(inserts_dir, output_pdf, self.queue)
-
-            self.result_pdf = output_pdf
-            self.output_dir = base_output
-
-            log_safe(self.queue, "All done!")
-        except Exception as e:
-            log_safe(self.queue, f"Error: {e}")
             self.result_pdf = None
-        finally:
-            # Switch back to UI thread to update controls
-            self.after(0, self.on_pipeline_done)
-
-    def on_pipeline_done(self):
-        self.progress.stop()
-        self.start_btn.config(state=tk.NORMAL)
-        if self.result_pdf and os.path.exists(self.result_pdf):
-            self.open_btn.config(state=tk.NORMAL)
-            self.append_log(f"PDF saved at: {self.result_pdf}")
-        else:
+            self.output_dir = None
             self.open_btn.config(state=tk.DISABLED)
+            self.start_btn.config(state=tk.DISABLED)
+            self.progress.start(10)
+            self.log.delete('1.0', tk.END)
 
-    def on_open_folder(self):
-        if self.output_dir and os.path.isdir(self.output_dir):
-            open_in_file_manager(self.output_dir)
+            self.worker = threading.Thread(target=self.run_pipeline, args=(url,), daemon=True)
+            self.worker.start()
+
+        def run_pipeline(self, url: str):
+            try:
+                cards = scrape_cards(url, self.queue)
+
+                set_name = derive_set_name_from_url(url)
+                base_output = os.path.join(os.path.abspath(os.getcwd()), 'output', set_name)
+                inserts_dir = os.path.join(base_output, 'inserts')
+                os.makedirs(inserts_dir, exist_ok=True)
+
+                create_inserts(cards, inserts_dir, self.queue)
+
+                output_pdf = os.path.join(base_output, f"{set_name}_inserts.pdf")
+                create_pdf_from_inserts(inserts_dir, output_pdf, self.queue)
+
+                self.result_pdf = output_pdf
+                self.output_dir = base_output
+
+                log_safe(self.queue, "All done!")
+            except Exception as e:
+                log_safe(self.queue, f"Error: {e}")
+                self.result_pdf = None
+            finally:
+                # Switch back to UI thread to update controls
+                self.after(0, self.on_pipeline_done)
+
+        def on_pipeline_done(self):
+            self.progress.stop()
+            self.start_btn.config(state=tk.NORMAL)
+            if self.result_pdf and os.path.exists(self.result_pdf):
+                self.open_btn.config(state=tk.NORMAL)
+                self.append_log(f"PDF saved at: {self.result_pdf}")
+            else:
+                self.open_btn.config(state=tk.DISABLED)
+
+        def on_open_folder(self):
+            if self.output_dir and os.path.isdir(self.output_dir):
+                open_in_file_manager(self.output_dir)
+
+
+def run_cli():
+    print("Tkinter not available. Running in CLI mode.\n")
+    url = input("Enter Limitless TCG cards URL: ").strip()
+    if not url:
+        print("No URL provided. Exiting.")
+        return
+    try:
+        cards = scrape_cards(url, None)
+        set_name = derive_set_name_from_url(url)
+        base_output = os.path.join(os.path.abspath(os.getcwd()), 'output', set_name)
+        inserts_dir = os.path.join(base_output, 'inserts')
+        os.makedirs(inserts_dir, exist_ok=True)
+
+        create_inserts(cards, inserts_dir, None)
+        output_pdf = os.path.join(base_output, f"{set_name}_inserts.pdf")
+        create_pdf_from_inserts(inserts_dir, output_pdf, None)
+
+        print(f"\nAll done. PDF created at: {output_pdf}")
+        try:
+            open_in_file_manager(base_output)
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"Error: {e}")
 
 
 if __name__ == '__main__':
-    App().mainloop()
+    if HAS_TK:
+        App().mainloop()
+    else:
+        run_cli()
