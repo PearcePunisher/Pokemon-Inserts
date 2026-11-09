@@ -34,9 +34,22 @@ cargo run --release -- https://limitlesstcg.com/cards/DLR    # start with a set 
 
 ### Package
 
-- **macOS:** `./bundle-macos.sh` creates `dist/Pokemon Inserts.app`. The app
-  isn't signed, so the first time, right-click it and choose **Open**.
+- **macOS:** `./bundle-macos.sh` creates `dist/Pokemon Inserts.app` and a
+  `.dmg`. Add `--universal` for one app that runs on both Apple Silicon and
+  Intel Macs. The app isn't notarized, so the first time, right-click it and
+  choose **Open**.
 - **Windows:** `cargo build --release` produces `target\release\pokemon-inserts.exe`.
+
+### Releasing
+
+Bump `version` in `Cargo.toml`, commit, then tag and push:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The **Release** GitHub Action builds the universal `.dmg` and the Windows
+`.exe`, then publishes them on the repo's Releases page.
 
 ## Tests
 
