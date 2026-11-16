@@ -63,6 +63,7 @@ pub struct Job {
     pub set: CardSet,
     pub settings: RenderSettings,
     pub double_sided: bool,
+    pub spacing: pdf::Spacing,
     pub save_pngs: bool,
     pub out_root: PathBuf,
 }
@@ -161,7 +162,7 @@ fn run(job: &Job, cache: &ImageCache, n: &Notifier) -> anyhow::Result<PathBuf> {
         anyhow::bail!("No inserts could be created.");
     }
     n.send(Msg::Log("Building PDF…".into()));
-    let bytes = pdf::build(&jpegs, CARD_W, CARD_H, job.double_sided);
+    let bytes = pdf::build(&jpegs, CARD_W, CARD_H, job.double_sided, job.spacing);
     let pdf_path = out_dir.join(job.pdf_name());
     std::fs::write(&pdf_path, bytes)?;
 
@@ -200,6 +201,7 @@ mod tests {
                     set: set.clone(),
                     settings: RenderSettings { style, blur: 20.0, show_name: true },
                     double_sided,
+                    spacing: Default::default(),
                     save_pngs: style == Style::PrinterFriendly && !double_sided,
                     out_root: out_root.clone(),
                 };

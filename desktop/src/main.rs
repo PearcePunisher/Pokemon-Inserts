@@ -10,11 +10,19 @@ use eframe::egui::{self, Color32, RichText, TextureHandle, TextureOptions};
 use pipeline::{ImageCache, Job, Msg, Notifier};
 use render::{RenderSettings, Style};
 use scrape::CardSet;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
 
 const PREVIEW_SCALE: f32 = 0.8;
+/// Render scale for the small inserts shown in the page preview.
+const THUMB_SCALE: f32 = 0.3;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum View {
+    Insert,
+    Page,
+}
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
@@ -47,8 +55,14 @@ struct App {
 
     settings: RenderSettings,
     double_sided: bool,
+    spacing: pdf::Spacing,
     save_pngs: bool,
     out_root: PathBuf,
+
+    view: View,
+    page_index: usize,
+    thumbs: HashMap<usize, TextureHandle>,
+    thumbs_settings: Option<RenderSettings>,
 
     preview_index: usize,
     preview_tex: Option<TextureHandle>,
@@ -79,8 +93,13 @@ impl App {
             loading_set: false,
             settings: RenderSettings { style: Style::Art, blur: 20.0, show_name: false },
             double_sided: false,
+            spacing: Default::default(),
             save_pngs: true,
             out_root,
+            view: View::Insert,
+            page_index: 0,
+            thumbs: HashMap::new(),
+            thumbs_settings: None,
             preview_index: 0,
             preview_tex: None,
             preview_key: None,
@@ -122,6 +141,7 @@ impl App {
             set,
             settings: self.settings.clone(),
             double_sided: self.double_sided,
+            spacing: self.spacing,
             save_pngs: self.save_pngs,
             out_root: self.out_root.clone(),
         };
@@ -140,6 +160,8 @@ impl App {
                     self.preview_index = 0;
                     self.preview_key = None;
                     self.preview_tex = None;
+                    self.page_index = 0;
+                    self.thumbs.clear();
                     self.last_pdf = None;
                     self.set = Some(set);
                 }
@@ -198,6 +220,39 @@ impl App {
         self.preview_key = Some(key);
     }
 
+    /// Renders small inserts for the cards on the page being previewed.
+    fn update_page_thumbs(&mut self, ctx: &egui::Context) {
+        let Some(set) = &self.set else { return };
+        if self.thumbs_settings.as_ref() != Some(&self.settings) {
+            self.thumbs.clear();
+            self.thumbs_settings = Some(self.settings.clone());
+        }
+        let pages = pdf::layout(set.cards.len(), self.double_sided);
+        let page = self.page_index.min(pages.len() - 1);
+        let needs_art = self.settings.style == Style::Art;
+        for i in pages[page].iter().flatten().copied() {
+            if self.thumbs.contains_key(&i) {
+                continue;
+            }
+            let art = self.cache.lock().unwrap().get(&i).cloned();
+            if needs_art && art.is_none() {
+                if !self.art_fetching.contains(&i) && !self.art_failed.contains(&i) {
+                    self.art_fetching.insert(i);
+                    pipeline::load_preview_art(set, i, self.cache.clone(), self.notifier.clone());
+                }
+                if !self.art_failed.contains(&i) {
+                    continue;
+                }
+            }
+            let img = render::render(&set.cards[i], &set.code, art.as_deref(), &self.settings, THUMB_SCALE, true);
+            let color = egui::ColorImage::from_rgba_unmultiplied(
+                [img.width() as usize, img.height() as usize],
+                img.as_raw(),
+            );
+            self.thumbs.insert(i, ctx.load_texture(format!("thumb{i}"), color, TextureOptions::LINEAR));
+        }
+    }
+
     fn settings_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         ui.heading("Insert style");
@@ -232,6 +287,15 @@ impl App {
         } else {
             ui.label(RichText::new("Print at 100% / actual size.").weak().small());
         }
+        ui.add_space(8.0);
+        ui.label("Spacing between inserts");
+        ui.checkbox(&mut self.spacing.no_h_gap, "No horizontal gap (columns touch)");
+        ui.checkbox(&mut self.spacing.no_v_gap, "No vertical gap (rows touch)");
+        ui.label(
+            RichText::new("Without a gap, neighbouring inserts share an edge, so one cut separates them.")
+                .weak()
+                .small(),
+        );
         if let Some(set) = &self.set {
             let pages = pdf::layout(set.cards.len(), self.double_sided).len();
             let sheets = if self.double_sided { pages / 2 } else { pages };
@@ -292,12 +356,33 @@ impl App {
             return;
         };
         let count = set.cards.len();
-        let mut idx = self.preview_index;
+        let mut view = self.view;
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.heading(&set.title);
             ui.label(RichText::new(format!("{count} cards")).weak());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.selectable_value(&mut view, View::Page, "Page");
+                ui.selectable_value(&mut view, View::Insert, "Insert");
+            });
         });
+        if view != self.view {
+            if view == View::Page {
+                // Jump to the page holding the insert being previewed.
+                self.page_index = self.preview_index / 9;
+            }
+            self.view = view;
+        }
+        match self.view {
+            View::Insert => self.insert_preview(ui),
+            View::Page => self.page_preview(ui),
+        }
+    }
+
+    fn insert_preview(&mut self, ui: &mut egui::Ui) {
+        let Some(set) = &self.set else { return };
+        let count = set.cards.len();
+        let mut idx = self.preview_index;
         ui.horizontal(|ui| {
             ui.label("Preview:");
             if ui.add_enabled(idx > 0, egui::Button::new("◀")).clicked() {
@@ -331,12 +416,89 @@ impl App {
             }
         });
     }
+
+    /// Shows a whole printed page exactly as it will be laid out in the PDF.
+    fn page_preview(&mut self, ui: &mut egui::Ui) {
+        let Some(set) = &self.set else { return };
+        let pages = pdf::layout(set.cards.len(), self.double_sided);
+        let total = pages.len();
+        let mut p = self.page_index.min(total - 1);
+        ui.horizontal(|ui| {
+            if ui.add_enabled(p > 0, egui::Button::new("◀")).clicked() {
+                p -= 1;
+            }
+            let mut label = format!("Page {} of {total}", p + 1);
+            if self.double_sided {
+                let side = if p.is_multiple_of(2) { "front" } else { "back" };
+                label += &format!("  ·  sheet {}, {side}", p / 2 + 1);
+            }
+            ui.label(label);
+            if ui.add_enabled(p + 1 < total, egui::Button::new("▶")).clicked() {
+                p += 1;
+            }
+            ui.label(RichText::new("Click an insert to view it larger.").weak().small());
+        });
+        self.page_index = p;
+        ui.add_space(8.0);
+
+        let ratio = pdf::PAGE_W / pdf::PAGE_H;
+        let avail = ui.available_size();
+        let h = (avail.y - 12.0).min((avail.x - 12.0) / ratio).max(100.0);
+        let size = egui::vec2(h * ratio, h);
+        let mut clicked = None;
+        ui.vertical_centered(|ui| {
+            let (page, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            let painter = ui.painter();
+            painter.rect_filled(page.translate(egui::vec2(3.0, 3.0)), 2.0, Color32::from_black_alpha(70));
+            painter.rect_filled(page, 0.0, Color32::WHITE);
+            let k = page.width() / pdf::PAGE_W;
+            let rounding = pdf::CORNER_RADIUS * k;
+            for (cell, [x, y, w, h]) in pdf::cell_rects(self.spacing).into_iter().enumerate() {
+                let r = egui::Rect::from_min_size(page.min + egui::vec2(x * k, y * k), egui::vec2(w * k, h * k));
+                let Some(i) = pages[p][cell] else {
+                    painter.rect_stroke(r, rounding, egui::Stroke::new(1.0_f32, Color32::from_gray(225)));
+                    continue;
+                };
+                match self.thumbs.get(&i) {
+                    Some(tex) => {
+                        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                        painter.image(tex.id(), r, uv, Color32::WHITE);
+                    }
+                    None => {
+                        painter.rect_filled(r, rounding, Color32::from_gray(235));
+                        painter.text(
+                            r.center(),
+                            egui::Align2::CENTER_CENTER,
+                            format!("#{}", set.cards[i].display_number()),
+                            egui::FontId::proportional(14.0),
+                            Color32::from_gray(150),
+                        );
+                    }
+                }
+                let card = &set.cards[i];
+                let resp = ui
+                    .interact(r, ui.id().with(("page_cell", cell)), egui::Sense::click())
+                    .on_hover_text(format!("#{} {}", card.display_number(), card.name))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                if resp.clicked() {
+                    clicked = Some(i);
+                }
+            }
+        });
+        if let Some(i) = clicked {
+            self.preview_index = i;
+            self.view = View::Insert;
+        }
+    }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_messages();
-        self.update_preview(ctx);
+        match self.view {
+            View::Insert => self.update_preview(ctx),
+            View::Page => self.update_page_thumbs(ctx),
+        }
 
         egui::TopBottomPanel::top("url").show(ctx, |ui| {
             ui.add_space(8.0);

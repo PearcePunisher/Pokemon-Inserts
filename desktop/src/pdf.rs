@@ -8,14 +8,42 @@
 
 use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref};
 
-const PAGE_W: f32 = 612.0; // 8.5in
-const PAGE_H: f32 = 792.0; // 11in
+pub const PAGE_W: f32 = 612.0; // 8.5in
+pub const PAGE_H: f32 = 792.0; // 11in
 const CARD_W: f32 = 180.0; // 2.5in
 const CARD_H: f32 = 252.0; // 3.5in
 const GAP: f32 = 2.88; // 0.04in
 const COLS: usize = 3;
 const ROWS: usize = 3;
 const PER_PAGE: usize = COLS * ROWS;
+/// Corner radius of an insert in points (matches render's 40px at 300 DPI).
+pub const CORNER_RADIUS: f32 = 9.6;
+
+/// Which gaps between inserts to remove. With a gap removed, neighbouring
+/// inserts share an edge so a single cut separates them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Spacing {
+    /// Columns touch (no space between side-by-side inserts).
+    pub no_h_gap: bool,
+    /// Rows touch (no space between stacked inserts).
+    pub no_v_gap: bool,
+}
+
+/// Position of each of the 9 cells as `[x, y, w, h]` in points, measured
+/// from the top-left of the page. The grid is centered so front and back
+/// line up when printed duplex.
+pub fn cell_rects(spacing: Spacing) -> [[f32; 4]; PER_PAGE] {
+    let gx = if spacing.no_h_gap { 0.0 } else { GAP };
+    let gy = if spacing.no_v_gap { 0.0 } else { GAP };
+    let grid_w = COLS as f32 * CARD_W + (COLS - 1) as f32 * gx;
+    let grid_h = ROWS as f32 * CARD_H + (ROWS - 1) as f32 * gy;
+    let left = (PAGE_W - grid_w) / 2.0;
+    let top = (PAGE_H - grid_h) / 2.0;
+    std::array::from_fn(|cell| {
+        let (r, c) = (cell / COLS, cell % COLS);
+        [left + c as f32 * (CARD_W + gx), top + r as f32 * (CARD_H + gy), CARD_W, CARD_H]
+    })
+}
 
 /// For each page, the card index (if any) in each of the 9 cells.
 pub fn layout(card_count: usize, double_sided: bool) -> Vec<[Option<usize>; PER_PAGE]> {
@@ -45,7 +73,13 @@ pub fn layout(card_count: usize, double_sided: bool) -> Vec<[Option<usize>; PER_
 
 /// Builds the PDF. `jpegs[i]` is the encoded insert for card `i` (or `None`
 /// if it failed; its cell is left blank so binder positions stay correct).
-pub fn build(jpegs: &[Option<Vec<u8>>], img_w: u32, img_h: u32, double_sided: bool) -> Vec<u8> {
+pub fn build(
+    jpegs: &[Option<Vec<u8>>],
+    img_w: u32,
+    img_h: u32,
+    double_sided: bool,
+    spacing: Spacing,
+) -> Vec<u8> {
     let mut pdf = Pdf::new();
     let mut alloc = Ref::new(1);
     let catalog_id = alloc.bump();
@@ -67,11 +101,7 @@ pub fn build(jpegs: &[Option<Vec<u8>>], img_w: u32, img_h: u32, double_sided: bo
         })
         .collect();
 
-    // Center the grid so front and back line up when printed duplex.
-    let grid_w = COLS as f32 * CARD_W + (COLS - 1) as f32 * GAP;
-    let grid_h = ROWS as f32 * CARD_H + (ROWS - 1) as f32 * GAP;
-    let left = (PAGE_W - grid_w) / 2.0;
-    let top = (PAGE_H - grid_h) / 2.0;
+    let rects = cell_rects(spacing);
 
     let mut page_ids = Vec::new();
     for cells in layout(jpegs.len(), double_sided) {
@@ -83,9 +113,8 @@ pub fn build(jpegs: &[Option<Vec<u8>>], img_w: u32, img_h: u32, double_sided: bo
         let mut names = Vec::new();
         for (cell, card) in cells.iter().enumerate() {
             let Some(id) = card.and_then(|c| image_ids[c]) else { continue };
-            let (r, c) = (cell / COLS, cell % COLS);
-            let x = left + c as f32 * (CARD_W + GAP);
-            let y = PAGE_H - (top + r as f32 * (CARD_H + GAP)) - CARD_H;
+            let [x, top, _, _] = rects[cell];
+            let y = PAGE_H - top - CARD_H;
             let name = format!("Im{cell}");
             content.save_state();
             content.transform([CARD_W, 0.0, 0.0, CARD_H, x, y]);
@@ -125,6 +154,20 @@ mod tests {
         assert_eq!(pages[0][0], Some(0));
         assert_eq!(pages[1][0], Some(9));
         assert_eq!(pages[1][1], None);
+    }
+
+    #[test]
+    fn spacing_controls_gaps_and_stays_centered() {
+        for (no_h, no_v) in [(false, false), (true, false), (false, true), (true, true)] {
+            let r = cell_rects(Spacing { no_h_gap: no_h, no_v_gap: no_v });
+            let gx = r[1][0] - (r[0][0] + CARD_W);
+            let gy = r[COLS][1] - (r[0][1] + CARD_H);
+            assert!((gx - if no_h { 0.0 } else { GAP }).abs() < 1e-3);
+            assert!((gy - if no_v { 0.0 } else { GAP }).abs() < 1e-3);
+            let last = r[PER_PAGE - 1];
+            assert!((r[0][0] - (PAGE_W - last[0] - CARD_W)).abs() < 1e-3);
+            assert!((r[0][1] - (PAGE_H - last[1] - CARD_H)).abs() < 1e-3);
+        }
     }
 
     #[test]
